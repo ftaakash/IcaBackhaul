@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ica Backhaul NMS</title>
+<style>
+:root{--bg:#0f1a22;--panel:#16242f;--line:#26394a;--text:#eef2f4;--muted:#93a4b2;--accent:#e8954a;--ok:#5fbf8f;--warn:#e8c25a;--bad:#e5615b;--info:#6fb3bc}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "IBM Plex Sans",system-ui,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line)}
+h1{font-size:18px;margin:0;font-weight:600}h1 span{color:var(--accent)}
+.clock{color:var(--muted);font-variant-numeric:tabular-nums}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button,label.tg{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--accent)}label.tg input{margin-right:6px;accent-color:var(--accent)}
+main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;padding:16px 20px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+.panel h2{margin:0 0 10px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.kpis{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:12px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.kpi b{display:block;font-size:24px;font-variant-numeric:tabular-nums}.kpi small{color:var(--muted)}
+.wide{grid-column:1/-1}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}
+th{color:var(--muted);font-weight:500;font-size:12px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+.up{background:var(--ok)}.down{background:var(--bad)}
+.sev-critical{color:var(--bad)}.sev-major{color:var(--accent)}.sev-minor{color:var(--warn)}.sev-info{color:var(--info)}
+.log{max-height:260px;overflow:auto;font-size:13px}.log div{padding:3px 0;border-bottom:1px dashed var(--line)}
+.scroll{overflow-x:auto}td button{padding:2px 8px;font-size:12px}
+svg text{fill:var(--muted);font-size:11px}
+canvas{width:100%;height:220px}
+@media(max-width:900px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div><h1><span>●</span> Ica Backhaul NMS</h1><div class="clock" id="clock">connecting…</div></div>
+  <div class="controls">
+    <button id="run">Pause</button>
+    <label class="tg">Speed <select id="speed"><option>1</option><option selected>2</option><option>10</option><option>30</option><option>60</option></select></label>
+    <label class="tg"><input type="checkbox" id="cc" checked>ClearConnect</label>
+    <label class="tg"><input type="checkbox" id="lic">Licence 670 Mbps (80 MHz)</label>
+    <label class="tg"><input type="checkbox" id="shield">Sun shields</label>
+    <label class="tg"><input type="checkbox" id="heat">Heatwave +5 °C</label>
+    <button id="dust">Dust storm</button>
+    <button id="reset">Reset</button>
+  </div>
+</header>
+<main>
+  <section class="kpis" id="kpis"></section>
+  <section class="panel"><h2>Topology (illustrative)</h2><svg id="topo" viewBox="-260 -260 520 520" width="100%" height="420"></svg></section>
+  <section class="panel"><h2>Delivered traffic, all links (Mbps, last 6 h)</h2><canvas id="chart" width="800" height="220"></canvas>
+    <h2 style="margin-top:14px">Active alarms</h2><div class="log" id="alarms" style="max-height:150px"></div></section>
+  <section class="panel wide scroll"><h2>Links</h2><table id="links"></table></section>
+  <section class="panel wide"><h2>Event log</h2><div class="log" id="events"></div></section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const post = (action, value, link_id) => fetch('/api/control', {method:'POST', headers:{'Content-Type':'application/json'},
+  body: JSON.stringify({action, value, link_id})}).then(refresh);
+let S = null;
+
+$('run').onclick = () => post(S && S.running ? 'pause' : 'resume');
+$('speed').onchange = e => post('speed', +e.target.value);
+$('cc').onchange = e => post('clearconnect', e.target.checked);
+$('lic').onchange = e => post('licence', e.target.checked);
+$('shield').onchange = e => post('sun_shield', e.target.checked);
+$('heat').onchange = e => post('heatwave', e.target.checked);
+$('dust').onclick = () => post('dust_storm');
+$('reset').onclick = () => post('reset', 7);
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmtT = t => { t += (S ? S.t0 : 0); const d = Math.floor(t/1440), m = t%1440; return `D${d} ${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`; };
+
+function kpis(s){
+  const k = s.kpis, tiles = [
+    ['Links up', `${k.links_up}/${k.links}`, ''], ['Availability', k.availability_pct.toFixed(2)+'%', 'since start'],
+    ['Capacity', k.capacity_mbps.toFixed(0), 'Mbps'], ['Delivered', k.delivered_mbps.toFixed(0), 'Mbps'],
+    ['Mean SINR', k.mean_sinr_db.toFixed(1), 'dB'], ['SCADA delivered', k.scada_delivery_pct.toFixed(2)+'%', 'priority class'],
+    ['DCS hops', k.dcs_events, `radar moves ${k.radar_events}`], ['Secure frames', k.frames_ok, `rejected ${k.frames_rejected}`],
+    ['Alarms', k.active_alarms, 'active']];
+  $('kpis').innerHTML = tiles.map(([a,b,c]) => `<div class="kpi"><small>${a}</small><b>${b}</b><small>${c}</small></div>`).join('');
+}
+
+function topo(s){
+  const maxD = Math.max(...s.links.map(l => l.distance_km)), R = 220;
+  let g = '';
+  for (const l of s.links){
+    const r = 40 + (R-40) * l.distance_km / maxD, a = (l.bearing - 90) * Math.PI/180;
+    const x = r*Math.cos(a), y = r*Math.sin(a);
+    const col = !l.up ? 'var(--bad)' : l.per_pct > 10 ? 'var(--warn)' : 'var(--ok)';
+    const w = 1 + 5 * l.capacity_mbps / s.cap_mbps;
+    g += `<line x1="0" y1="0" x2="${x}" y2="${y}" stroke="${col}" stroke-width="${w}" opacity=".85"><title>${esc(l.name)}: ${l.capacity_mbps} Mbps, SINR ${l.sinr_db} dB</title></line>`;
+    const shape = l.kind === 'thermal' ? `<rect x="${x-7}" y="${y-7}" width="14" height="14" rx="3"` : `<circle cx="${x}" cy="${y}" r="7"`;
+    g += `${shape} fill="#16242f" stroke="${col}" stroke-width="2"><title>${esc(l.name)}</title></${l.kind==='thermal'?'rect':'circle'}>`;
+    g += `<text x="${x + (x>=0?10:-10)}" y="${y+4}" text-anchor="${x>=0?'start':'end'}">${String(l.id+1).padStart(2,'0')}</text>`;
+  }
+  g += `<circle r="22" fill="#e8954a"/><text y="4" text-anchor="middle" style="fill:#0f1a22;font-weight:700">DC</text>`;
+  $('topo').innerHTML = g;
+}
+
+function chart(s){
+  const c = $('chart'), x = c.getContext('2d'), h = s.total_history, W = c.width, H = c.height;
+  x.clearRect(0,0,W,H);
+  const max = Math.max(100, ...h) * 1.1;
+  x.strokeStyle = '#26394a'; x.lineWidth = 1; x.fillStyle = '#93a4b2'; x.font = '12px sans-serif';
+  for (let i=0;i<=4;i++){ const y = H - 20 - (H-30)*i/4; x.beginPath(); x.moveTo(40,y); x.lineTo(W,y); x.stroke(); x.fillText(Math.round(max*i/4), 2, y+4); }
+  if (h.length < 2) return;
+  x.beginPath(); x.strokeStyle = '#e8954a'; x.lineWidth = 2;
+  h.forEach((v,i) => { const px = 40 + (W-40)*i/(360-1), py = H - 20 - (H-30)*v/max; i ? x.lineTo(px,py) : x.moveTo(px,py); });
+  x.stroke();
+}
+
+function table(s){
+  const head = '<tr><th>#</th><th>Site</th><th>km</th><th>Channel</th><th>Tx dBm</th><th>MCS</th><th>Modulation</th><th>SINR dB</th><th>Retries %</th><th>Capacity</th><th>Offered</th><th>Delivered</th><th>Temp °C</th><th>Avail %</th><th>DCS</th><th></th></tr>';
+  $('links').innerHTML = head + s.links.map(l => `<tr>
+    <td><span class="dot ${l.up?'up':'down'}"></span>${l.id+1}</td><td>${esc(l.name)}</td><td>${l.distance_km}</td>
+    <td>${l.channel}${l.dfs?' <small>DFS</small>':''}</td><td>${l.tx_dbm}</td><td>${l.mcs}</td><td>${l.modulation}</td>
+    <td>${l.sinr_db}</td><td>${l.per_pct}</td><td>${l.capacity_mbps}</td><td>${l.offered_mbps}</td><td>${l.delivered_mbps}</td>
+    <td style="color:${l.temp_c>60?'var(--bad)':'inherit'}">${l.temp_c}</td><td>${l.availability_pct}</td><td>${l.dcs_events}</td>
+    <td><button data-a="interfere" data-l="${l.id}">Interfere</button> <button data-a="tamper" data-l="${l.id}">Tamper</button></td></tr>`).join('');
+}
+$('links').onclick = e => { const b = e.target.closest('button'); if (b) post(b.dataset.a, null, +b.dataset.l); };
+
+function logs(s){
+  const name = id => id < 0 ? 'Network' : `L${String(id+1).padStart(2,'0')}`;
+  $('alarms').innerHTML = s.alarms.length ? s.alarms.map(a => `<div class="sev-${a.severity}">${a.severity.toUpperCase()} · ${name(a.link_id)} · ${esc(a.message)}</div>`).join('') : '<div style="color:var(--ok)">No active alarms</div>';
+  $('events').innerHTML = s.events.map(e => `<div><span class="clock">${fmtT(e.t)}</span> <span class="sev-${e.severity}">${name(e.link)}</span> ${esc(e.text)}</div>`).join('');
+}
+
+async function refresh(){
+  try {
+    S = await (await fetch('/api/state')).json();
+    $('clock').textContent = `Day ${S.day} · ${S.clock} · ambient ${S.ambient_c} °C${S.storm?' · DUST STORM':''}${S.heatwave?' · HEATWAVE':''} · licence cap ${S.cap_mbps} Mbps`;
+    $('run').textContent = S.running ? 'Pause' : 'Resume';
+    $('cc').checked = S.clearconnect; $('lic').checked = S.licence_upgraded; $('shield').checked = S.sun_shield; $('heat').checked = S.heatwave;
+    kpis(S); topo(S); chart(S); table(S); logs(S);
+  } catch (e) { $('clock').textContent = 'connection lost, retrying…'; }
+}
+refresh(); setInterval(refresh, 1000);
+</script>
+</body>
+</html>
