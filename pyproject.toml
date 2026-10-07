@@ -1,0 +1,13 @@
+[project]
+name = "ica-backhaul-sim"
+version = "1.0.0"
+description = "Simulation of Electro Dunas' 15-link Tsunami QB-10100L wireless backhaul in Ica, Peru"
+requires-python = ">=3.10"
+dependencies = ["numpy", "fastapi", "uvicorn", "cryptography", "matplotlib"]
+
+[project.optional-dependencies]
+test = ["pytest", "httpx"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
