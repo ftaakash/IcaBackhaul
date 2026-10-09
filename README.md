@@ -16,6 +16,7 @@
   <a href="#-architecture">Architecture</a> ·
   <a href="#-results">Results</a> ·
   <a href="#-dashboard">Dashboard</a> ·
+  <a href="#-the-story">Story</a> ·
   <a href="#-assumptions--limits">Assumptions</a> ·
   <a href="#-team">Team</a>
 </p>
@@ -46,6 +47,13 @@ A live web console in the style of ProximVision Advanced: topology, KPIs, alarms
 
 **📊 Experiments**<br>
 Six reproducible experiments with charts, a link-budget table and a JSON summary, regenerated with one command.
+
+</td>
+</tr>
+<tr>
+<td colspan="3" valign="top">
+
+**📖 Story**: *Fifteen Links Over Ica*, a scroll-driven telling of the case study that runs a TypeScript port of the engine live in the page. See [the story](#-the-story).
 
 </td>
 </tr>
@@ -190,6 +198,19 @@ Every number below comes from `python scripts/run_experiments.py`. Runs are seed
 <p align="center"><img src="docs/dashboard.png" alt="Full dashboard" width="100%"></p>
 </details>
 
+## 📖 The story
+
+[`story/`](story) holds **Fifteen Links Over Ica**, a scroll-driven story of the deployment told in fourteen chapters: Ica, the utility, the crowded band, the radio choice, tower sizing, ClearConnect, WORP, security, heat, the outcome and the next limit. As the reader scrolls, a sticky stage changes to a new live visualisation for each chapter.
+
+- **One file, no server.** Open [`story/dist/fifteen-links-over-ica.html`](story/dist/fifteen-links-over-ica.html) in a browser.
+- **Live, not recorded.** The network, spectrum and channel hops come from [`engine.ts`](story/src/engine/engine.ts), a line-for-line port of `backhaul/`. The reader can jam a link, switch ClearConnect off, seal and tamper with a real AES-256-GCM frame, and toggle a heatwave or sun shield.
+- **Every number is sourced.** Each figure is tagged *Reported*, *Measured*, *Datasheet*, *Simulated* or *Live model*. The *Simulated* charts read [`results/`](results) directly.
+- **Checked against Python.** Mean availability is 99.68 % vs 99.77 % with ClearConnect and 85.40 % vs 85.07 % without (7 days × 3 seeds). Path loss, mast heights and the heat curve match exactly (`pnpm run validate`).
+
+```bash
+cd story && pnpm install && pnpm run build   # → story/dist/fifteen-links-over-ica.html
+```
+
 ## 🔐 Security model
 
 ```mermaid
@@ -232,6 +253,7 @@ IcaBackhaul/
 ├── tests/                    pytest suite (26 tests)
 ├── results/                  generated charts, summary.json, link_budget.csv
 ├── docs/                     banner and screenshots
+├── story/                    scroll-driven story + TypeScript engine port (React, Parcel)
 └── run.py                    launcher (HTTP, or HTTPS with a TLS 1.2 floor)
 ```
 
@@ -248,6 +270,7 @@ The commit history follows the build order:
 7. **Dashboard**: FastAPI backend, web UI, TLS launcher, integration tests
 8. **Experiments**: reproducible results and charts
 9. **Documentation**: this README, banner and screenshots
+10. **Story**: *Fifteen Links Over Ica*, a scroll-driven story with a live TypeScript port of the engine
 
 ## 👥 Team
 
